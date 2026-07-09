@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en" class="theme">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deferred Onboarding · Stripe Connect Dashboard</title>
+    <meta
+      name="description"
+      content="Visual walkthrough of the deferred-onboarding funds flow for Stripe Connect Custom accounts: hold an unverified courier's earnings on the platform, cap the risk, and release on verification."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="logo-mark" aria-hidden="true"></span>
+        <div>
+          <h1>Deferred Onboarding</h1>
+          <p class="topbar__sub">Stripe Connect · Custom accounts · Separate Charges &amp; Transfers</p>
+        </div>
+      </div>
+      <div class="topbar__meta">
+        <span id="mode-badge" class="badge badge--muted">checking…</span>
+        <span id="caps-badge" class="badge badge--outline">caps: —</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- Funds-flow visualization -->
+      <section class="card flow" aria-label="Funds flow">
+        <div class="card__head">
+          <h2>Funds flow</h2>
+          <p class="card__hint">Platform is always merchant of record. The courier's share only moves when they're verified.</p>
+        </div>
+        <div class="flow__diagram">
+          <div class="node node--customer">
+            <span class="node__label">Customer</span>
+            <span class="node__desc">pays order total</span>
+          </div>
+          <div class="arrow" id="arrow-charge"><span></span></div>
+          <div class="node node--platform">
+            <span class="node__label">Platform balance</span>
+            <span class="node__desc">merchant of record</span>
+          </div>
+          <div class="flow__split">
+            <div class="arrow arrow--up" id="arrow-hold"><span></span><em>hold</em></div>
+            <div class="arrow arrow--down" id="arrow-payout"><span></span><em>transfer</em></div>
+          </div>
+          <div class="flow__targets">
+            <div class="node node--held" id="node-held">
+              <span class="node__label">Held earnings</span>
+              <span class="node__desc">unverified courier</span>
+            </div>
+            <div class="node node--courier" id="node-courier">
+              <span class="node__label">Courier payout</span>
+              <span class="node__desc">verified courier</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Courier panel -->
+      <section class="card" aria-label="Courier">
+        <div class="card__head">
+          <h2>Courier</h2>
+          <p class="card__hint">Minimal Custom account — no KYC collected up front.</p>
+        </div>
+
+        <div id="courier-empty" class="empty">
+          <p>No active courier yet.</p>
+          <button class="btn btn--primary" id="btn-create">Create courier</button>
+        </div>
+
+        <div id="courier-card" class="courier hidden">
+          <div class="courier__row">
+            <span class="courier__id" id="courier-id">acct_…</span>
+            <span id="courier-status" class="pill pill--warn">Unverified</span>
+          </div>
+
+          <div class="cap">
+            <div class="cap__labels">
+              <span>Held-order exposure</span>
+              <span id="cap-count">0 / 0</span>
+            </div>
+            <div class="cap__track"><div class="cap__fill" id="cap-fill"></div></div>
+            <div class="cap__labels cap__labels--sub">
+              <span id="cap-amount">$0.00 held</span>
+              <span id="cap-limit">cap $0.00</span>
+            </div>
+          </div>
+
+          <div class="courier__actions">
+            <button class="btn" id="btn-onboard">Onboarding link</button>
+            <button class="btn btn--success" id="btn-verify">Simulate verified</button>
+            <button class="btn btn--ghost" id="btn-reset">New courier</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Order panel -->
+      <section class="card" aria-label="Place order">
+        <div class="card__head">
+          <h2>Place order</h2>
+          <p class="card__hint">Customer checks out. Courier's share is held or paid based on verification.</p>
+        </div>
+
+        <form id="order-form" class="form">
+          <div class="form__grid">
+            <label class="field">
+              <span>Order ID</span>
+              <input id="order-id" name="orderId" type="text" value="o1" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Order total (USD)</span>
+              <input id="order-total" name="total" type="number" min="1" step="0.01" value="30.00" />
+            </label>
+            <label class="field">
+              <span>Courier share (USD)</span>
+              <input id="order-share" name="share" type="number" min="0" step="0.01" value="6.00" />
+            </label>
+          </div>
+          <button class="btn btn--primary btn--block" type="submit" id="btn-order" disabled>
+            Charge customer
+          </button>
+          <p class="form__note">Create a courier first to enable orders.</p>
+        </form>
+      </section>
+
+      <!-- Ledger -->
+      <section class="card ledger" aria-label="Held earnings ledger">
+        <div class="card__head">
+          <h2>Held earnings ledger</h2>
+          <p class="card__hint">On-platform funds awaiting the courier's verification.</p>
+        </div>
+        <div class="ledger__totals">
+          <div class="stat">
+            <span class="stat__value" id="total-count">0</span>
+            <span class="stat__label">held orders</span>
+          </div>
+          <div class="stat">
+            <span class="stat__value" id="total-amount">$0.00</span>
+            <span class="stat__label">held for courier</span>
+          </div>
+          <div class="stat">
+            <span class="stat__value" id="total-status">—</span>
+            <span class="stat__label">release state</span>
+          </div>
+        </div>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Charge</th>
+              <th>Transfer group</th>
+              <th class="num">Amount</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-body">
+            <tr class="table__empty"><td colspan="4">No held orders.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Event log -->
+      <section class="card log" aria-label="Event log">
+        <div class="card__head">
+          <h2>Event log</h2>
+          <p class="card__hint">API calls and funds-flow decisions in order.</p>
+        </div>
+        <ul id="log" class="log__list"></ul>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

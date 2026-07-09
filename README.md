@@ -15,12 +15,28 @@ in the SA tech screen prep, built on top of Separate Charges & Transfers.
   webhook), all held orders are paid out in one pass and future orders pay
   out immediately.
 
+## Visual dashboard
+
+A single-page dashboard (served from `/public` by the same Express server) is
+available at `http://localhost:4242/` once the server is running. It walks
+through the whole funds flow visually — create a courier, place held orders,
+watch the risk cap trigger, verify the courier, and see held earnings release —
+all against the real endpoints below.
+
+If `STRIPE_SECRET_KEY` is **not** set, the server transparently falls back to an
+in-memory mock Stripe (`lib/mock-stripe.js`) so the dashboard is fully
+interactive for offline rehearsal; the badge in the top-right shows `MOCK MODE`
+vs `LIVE STRIPE`. In mock mode the "Onboarding link" opens a simulated
+onboarding page, and "Simulate verified" flips the courier's `transfers`
+capability and runs the same release logic the webhook uses. With a real test
+key everything hits real Stripe instead.
+
 ## Setup
 
 ```bash
 npm install
 cp .env.example .env
-# fill in STRIPE_SECRET_KEY (test mode)
+# fill in STRIPE_SECRET_KEY (test mode) — or leave unset to run in mock mode
 ```
 
 In a separate terminal, forward webhooks and copy the printed signing secret
