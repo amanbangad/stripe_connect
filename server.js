@@ -1,9 +1,13 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const stripe = require('./lib/stripe');
 const store = require('./lib/store');
 
 const app = express();
+
+// Serve the dashboard (static single-page UI in /public).
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Courier onboarding -----------------------------------------------
 
@@ -41,6 +45,28 @@ app.post('/couriers/:id/onboarding-link', express.json(), async (req, res) => {
   res.json({ url: link.url });
 });
 
+async function isTransfersActive(courierId) {
+  const account = await stripe.accounts.retrieve(courierId);
+  return account.capabilities && account.capabilities.transfers === 'active';
+}
+
+// Courier status — used by the dashboard to render onboarding + ledger state.
+app.get('/couriers/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const transfersActive = await isTransfersActive(id);
+    res.json({
+      courierId: id,
+      transfersActive,
+      released: store.hasBeenReleased(id),
+      entries: store.getPending(id),
+      totals: store.pendingTotals(id),
+    });
+  } catch (err) {
+    res.status(404).json({ error: 'not_found', message: err.message });
+  }
+});
+
 // Demo helper — inspect what's currently held for a courier.
 app.get('/couriers/:id/pending', (req, res) => {
   const { id } = req.params;
@@ -53,11 +79,6 @@ app.get('/couriers/:id/pending', (req, res) => {
 });
 
 // --- Orders --------------------------------------------------------------
-
-async function isTransfersActive(courierId) {
-  const account = await stripe.accounts.retrieve(courierId);
-  return account.capabilities && account.capabilities.transfers === 'active';
-}
 
 // 3) Customer places an order. Platform is always merchant of record (SCT).
 // If the courier is already verified, we transfer their share immediately —
@@ -128,6 +149,41 @@ app.post('/orders', express.json(), async (req, res) => {
   });
 });
 
+// --- Shared release logic -----------------------------------------------
+
+// Pay out every held order for a newly-verified courier in one pass.
+// Called from both the Stripe webhook (real flow) and the /simulate-verified
+// dev endpoint (mock / rehearsal flow).
+async function releaseHeldOrders(courierId) {
+  if (store.hasBeenReleased(courierId)) return { released: 0, transfers: [] };
+
+  const entries = store.getPending(courierId);
+  if (entries.length === 0) {
+    store.clearPending(courierId); // mark verified so future orders pay out immediately
+    return { released: 0, transfers: [] };
+  }
+
+  console.log(`Releasing ${entries.length} held order(s) for ${courierId}`);
+
+  // NOTE: in production, delay this 7-14 days past the courier's onboarding
+  // date (via a job queue) to stay inside the dispute window on the orders
+  // being released — not implemented in this demo, which releases immediately
+  // for clarity.
+  const transfers = [];
+  for (const entry of entries) {
+    const transfer = await stripe.transfers.create({
+      amount: entry.amountCents,
+      currency: 'usd',
+      destination: courierId,
+      transfer_group: entry.transferGroup,
+      source_transaction: entry.chargeId,
+    });
+    transfers.push(transfer.id);
+  }
+  store.clearPending(courierId);
+  return { released: entries.length, transfers };
+}
+
 // --- Webhook: release held earnings once the courier finishes onboarding -
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -145,33 +201,49 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
 
   if (event.type === 'account.updated') {
     const account = event.data.object;
-    const courierId = account.id;
     const transfersActive = account.capabilities && account.capabilities.transfers === 'active';
-
-    if (transfersActive && !store.hasBeenReleased(courierId)) {
-      const entries = store.getPending(courierId);
-      if (entries.length > 0) {
-        console.log(`Releasing ${entries.length} held order(s) for ${courierId}`);
-
-        // NOTE: in production, delay this 7-14 days past the courier's
-        // onboarding date (via a job queue) to stay inside the dispute
-        // window on the orders being released — not implemented in this
-        // demo, which releases immediately for clarity.
-        for (const entry of entries) {
-          await stripe.transfers.create({
-            amount: entry.amountCents,
-            currency: 'usd',
-            destination: courierId,
-            transfer_group: entry.transferGroup,
-            source_transaction: entry.chargeId,
-          });
-        }
-        store.clearPending(courierId);
-      }
+    if (transfersActive) {
+      await releaseHeldOrders(account.id);
     }
   }
 
   res.json({ received: true });
+});
+
+// --- Dashboard config + simulation helpers ------------------------------
+
+// Expose runtime config so the UI can render caps and indicate whether it is
+// talking to real Stripe or the in-memory mock.
+app.get('/config', (req, res) => {
+  res.json({
+    mock: Boolean(stripe.__isMock),
+    caps: store.getCaps(),
+  });
+});
+
+// Simulate a courier completing onboarding without waiting on the Stripe CLI
+// webhook. In mock mode this flips the mock account's `transfers` capability to
+// `active`; in both modes it then runs the same release logic the webhook uses.
+// Intended for demos/rehearsal only.
+app.post('/couriers/:id/simulate-verified', express.json(), async (req, res) => {
+  const { id } = req.params;
+  if (stripe.__isMock && typeof stripe.__setVerified === 'function') {
+    stripe.__setVerified(id);
+  }
+  try {
+    const active = await isTransfersActive(id);
+    if (!active) {
+      return res.status(409).json({
+        error: 'not_active',
+        message:
+          'Transfers capability is not active for this courier. With real Stripe, complete Stripe-hosted onboarding so the account.updated webhook fires.',
+      });
+    }
+    const result = await releaseHeldOrders(id);
+    res.json({ status: 'verified', ...result });
+  } catch (err) {
+    res.status(404).json({ error: 'not_found', message: err.message });
+  }
 });
 
 const port = process.env.PORT || 4242;
