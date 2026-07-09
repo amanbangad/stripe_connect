@@ -246,5 +246,9 @@ app.post('/couriers/:id/simulate-verified', express.json(), async (req, res) => 
   }
 });
 
-const port = process.env.PORT || 4242;
-app.listen(port, () => console.log(`Deferred onboarding demo listening on :${port}`));
+// Bind to the port the platform/preview provides (PORT), falling back to 3000
+// for local dev. Listen on 0.0.0.0 so the preview proxy can reach it.
+const port = process.env.PORT || 3000;
+app.listen(port, '0.0.0.0', () =>
+  console.log(`Deferred onboarding demo listening on :${port}`)
+);
