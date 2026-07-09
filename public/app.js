@@ -8,6 +8,7 @@ const state = {
   courier: null, // { id, transfersActive, released, entries, totals }
   caps: { maxHeldOrders: 3, maxHeldCents: 5000 },
   mock: false,
+  publishableKey: null,
   orderSeq: 1,
 };
 
@@ -236,15 +237,12 @@ async function placeOrder(evt) {
   }
 }
 
-async function getOnboardingLink() {
+function getOnboardingLink() {
   if (!state.courier) return;
-  try {
-    const data = await api('POST', `/couriers/${state.courier.id}/onboarding-link`, {});
-    log(`Onboarding link created — opening Stripe-hosted onboarding.`, 'info');
-    window.open(data.url, '_blank', 'noopener');
-  } catch (err) {
-    log(`Onboarding link failed: ${err.message}`, 'error');
-  }
+  // Open our own onboarding page, which tokenizes the courier's bank details
+  // client-side with Stripe.js before attaching them to the Custom account.
+  log(`Opening courier onboarding (Stripe.js bank tokenization).`, 'info');
+  window.location.href = `/onboarding.html?account=${encodeURIComponent(state.courier.id)}`;
 }
 
 async function simulateVerified() {
@@ -278,6 +276,7 @@ async function init() {
     const cfg = await api('GET', '/config');
     state.caps = cfg.caps;
     state.mock = cfg.mock;
+    state.publishableKey = cfg.publishableKey;
 
     const badge = $('mode-badge');
     badge.textContent = cfg.mock ? 'MOCK MODE' : 'LIVE STRIPE';

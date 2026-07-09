@@ -3,14 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Simulated onboarding · Deferred Onboarding demo</title>
-    <meta name="description" content="Stand-in for Stripe-hosted onboarding used in mock mode." />
+    <title>Courier onboarding · Deferred Onboarding demo</title>
+    <meta name="description" content="Collect courier payout bank details with Stripe.js client-side tokenization." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="https://js.stripe.com/v3/"></script>
     <style>
       .onb {
         max-width: 460px;
@@ -25,11 +26,26 @@
       .onb .field {
         margin-bottom: 14px;
       }
+      .onb__row {
+        display: flex;
+        gap: 12px;
+      }
+      .onb__row .field {
+        flex: 1;
+      }
       .onb__id {
         font-family: var(--mono);
         font-size: 12px;
         word-break: break-all;
         color: var(--muted);
+      }
+      .onb__pci {
+        font-size: 11.5px;
+        color: var(--muted);
+        margin: 4px 0 18px;
+        display: flex;
+        gap: 6px;
+        align-items: flex-start;
       }
     </style>
   </head>
@@ -38,8 +54,8 @@
       <div class="topbar__brand">
         <span class="logo-mark" aria-hidden="true"></span>
         <div>
-          <h1>Verify your account</h1>
-          <p class="topbar__sub">Simulated Stripe-hosted onboarding (mock mode)</p>
+          <h1>Add your payout details</h1>
+          <p class="topbar__sub">Courier onboarding · Stripe.js client-side tokenization</p>
         </div>
       </div>
     </header>
@@ -47,29 +63,46 @@
     <main class="onb">
       <div class="card">
         <div class="card__head">
-          <h2>Courier identity verification</h2>
-          <p class="card__hint">In live mode this is Stripe's hosted onboarding. Here it's a stand-in so you can complete the flow offline.</p>
+          <h2>Courier identity &amp; payout account</h2>
+          <p class="card__hint">
+            Bank details are tokenized in your browser by Stripe.js using the publishable key —
+            the raw account number never touches this server.
+          </p>
         </div>
         <p class="onb__note">Account: <span class="onb__id" id="acct">—</span></p>
 
         <label class="field">
           <span>Legal name</span>
-          <input type="text" value="Alex Courier" />
-        </label>
-        <label class="field">
-          <span>Date of birth</span>
-          <input type="text" value="01 / 01 / 1990" />
-        </label>
-        <label class="field">
-          <span>SSN (last 4)</span>
-          <input type="text" value="0000" />
-        </label>
-        <label class="field">
-          <span>Bank account (routing / account)</span>
-          <input type="text" value="110000000 / 000123456789" />
+          <input type="text" id="legal-name" value="Alex Courier" autocomplete="name" />
         </label>
 
-        <button class="btn btn--primary btn--block" id="submit">Submit &amp; finish onboarding</button>
+        <div class="onb__row">
+          <label class="field">
+            <span>Date of birth</span>
+            <input type="date" id="dob" value="1990-01-01" />
+          </label>
+          <label class="field">
+            <span>SSN (last 4)</span>
+            <input type="text" id="ssn" value="0000" inputmode="numeric" maxlength="4" />
+          </label>
+        </div>
+
+        <div class="onb__row">
+          <label class="field">
+            <span>Routing number</span>
+            <input type="text" id="routing" value="110000000" inputmode="numeric" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Account number</span>
+            <input type="text" id="account" value="000123456789" inputmode="numeric" autocomplete="off" />
+          </label>
+        </div>
+        <p class="onb__pci">
+          <span aria-hidden="true">&#128274;</span>
+          <span>Test values shown. Stripe test routing <code>110000000</code> always succeeds.</span>
+        </p>
+
+        <button class="btn btn--primary btn--block" id="submit">Tokenize &amp; finish onboarding</button>
         <p class="form__note" id="msg"></p>
       </div>
     </main>
@@ -79,23 +112,78 @@
       const account = params.get('account');
       document.getElementById('acct').textContent = account || '(missing)';
 
-      document.getElementById('submit').addEventListener('click', async () => {
-        const btn = document.getElementById('submit');
-        const msg = document.getElementById('msg');
-        btn.disabled = true;
-        msg.textContent = 'Submitting to Stripe…';
+      const msg = document.getElementById('msg');
+      const btn = document.getElementById('submit');
+      let stripe = null;
+
+      // Initialize Stripe.js with the publishable key exposed by /config.
+      async function initStripe() {
         try {
-          const res = await fetch(`/couriers/${encodeURIComponent(account)}/simulate-verified`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.message || 'failed');
-          msg.textContent = `Verified. Released ${data.released} held order(s). Returning to dashboard…`;
-          setTimeout(() => (location.href = '/'), 1200);
+          const cfg = await fetch('/config').then((r) => r.json());
+          if (cfg.publishableKey && window.Stripe) {
+            stripe = Stripe(cfg.publishableKey);
+          } else if (!cfg.mock) {
+            msg.textContent = 'No publishable key configured — cannot tokenize bank details.';
+          }
         } catch (err) {
-          msg.textContent = `Error: ${err.message}`;
+          msg.textContent = 'Could not load Stripe config: ' + err.message;
+        }
+      }
+      initStripe();
+
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        msg.textContent = 'Tokenizing bank account with Stripe.js…';
+
+        const legalName = document.getElementById('legal-name').value.trim();
+        const dob = document.getElementById('dob').value;
+        const ssnLast4 = document.getElementById('ssn').value.trim();
+        const routing = document.getElementById('routing').value.trim();
+        const accountNumber = document.getElementById('account').value.trim();
+
+        try {
+          let bankToken = null;
+
+          // Client-side tokenization: raw bank numbers go straight to Stripe,
+          // and we only keep the returned single-use token.
+          if (stripe) {
+            const { token, error } = await stripe.createToken('bank_account', {
+              country: 'US',
+              currency: 'usd',
+              routing_number: routing,
+              account_number: accountNumber,
+              account_holder_name: legalName,
+              account_holder_type: 'individual',
+            });
+            if (error) throw new Error(error.message);
+            bankToken = token.id;
+            msg.textContent = 'Bank account tokenized (' + bankToken + '). Submitting KYC…';
+          } else {
+            msg.textContent = 'Submitting onboarding (mock mode)…';
+          }
+
+          const res = await fetch(
+            '/couriers/' + encodeURIComponent(account) + '/verify',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bankToken, legalName, dob, ssnLast4 }),
+            }
+          );
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || 'verification failed');
+
+          if (data.transfersActive) {
+            msg.textContent =
+              'Verified. Released ' + data.released + ' held order(s). Returning to dashboard…';
+            setTimeout(() => (location.href = '/?verified=' + encodeURIComponent(account)), 1400);
+          } else {
+            msg.textContent =
+              'Bank account attached, but Stripe still lists verification as pending. Try again shortly.';
+            btn.disabled = false;
+          }
+        } catch (err) {
+          msg.textContent = 'Error: ' + err.message;
           btn.disabled = false;
         }
       });
