@@ -218,6 +218,9 @@ app.get('/config', (req, res) => {
   res.json({
     mock: Boolean(stripe.__isMock),
     caps: store.getCaps(),
+    // Publishable key is safe to send to the browser (it's public by design).
+    // Sourced from the Stripe integration's env var — never hardcoded.
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || null,
   });
 });
 

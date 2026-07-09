@@ -8,6 +8,7 @@ const state = {
   courier: null, // { id, transfersActive, released, entries, totals }
   caps: { maxHeldOrders: 3, maxHeldCents: 5000 },
   mock: false,
+  publishableKey: null,
   orderSeq: 1,
 };
 
@@ -278,6 +279,7 @@ async function init() {
     const cfg = await api('GET', '/config');
     state.caps = cfg.caps;
     state.mock = cfg.mock;
+    state.publishableKey = cfg.publishableKey;
 
     const badge = $('mode-badge');
     badge.textContent = cfg.mock ? 'MOCK MODE' : 'LIVE STRIPE';
