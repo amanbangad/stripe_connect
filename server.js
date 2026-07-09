@@ -224,6 +224,67 @@ app.get('/config', (req, res) => {
   });
 });
 
+// Real deferred-onboarding completion. The courier's bank details are
+// tokenized in the BROWSER with Stripe.js (see /onboarding.html) so raw
+// routing/account numbers never touch our server — we only receive a
+// single-use bank-account token (btok_...). Here we attach that token as the
+// account's external_account and submit the remaining KYC so Stripe can
+// activate the `transfers` capability, then release any held earnings.
+app.post('/couriers/:id/verify', express.json(), async (req, res) => {
+  const { id } = req.params;
+  const { bankToken, legalName = 'Alex Courier', dob = '1990-01-01', ssnLast4 = '0000' } = req.body;
+
+  try {
+    if (stripe.__isMock) {
+      // Mock mode: no real KYC — just attach the token and mark verified.
+      await stripe.accounts.update(id, { external_account: bankToken });
+    } else {
+      const [firstName, ...rest] = String(legalName).trim().split(/\s+/);
+      const [year, month, day] = dob.split('-').map(Number);
+
+      // Test-mode "magic" values that let Stripe verify the identity instantly.
+      await stripe.accounts.update(id, {
+        business_type: 'individual',
+        individual: {
+          first_name: firstName || 'Alex',
+          last_name: rest.join(' ') || 'Courier',
+          dob: { day, month, year },
+          ssn_last_4: ssnLast4,
+          id_number: '000000000',
+          email: 'courier@example.com',
+          phone: '+15555550123',
+          address: {
+            line1: 'address_full_match',
+            city: 'San Francisco',
+            state: 'CA',
+            postal_code: '94103',
+            country: 'US',
+          },
+        },
+        business_profile: {
+          mcc: '4214',
+          product_description: 'Food delivery courier',
+          url: 'https://example.com',
+        },
+        external_account: bankToken, // client-side bank token from Stripe.js
+        tos_acceptance: { date: Math.floor(Date.now() / 1000), ip: req.ip || '127.0.0.1' },
+      });
+    }
+
+    const active = await isTransfersActive(id);
+    let result = { released: 0, transfers: [] };
+    if (active) result = await releaseHeldOrders(id);
+
+    res.json({
+      status: active ? 'verified' : 'pending_verification',
+      transfersActive: active,
+      ...result,
+    });
+  } catch (err) {
+    res.status(400).json({ error: 'verify_failed', message: err.message });
+  }
+});
+
 // Simulate a courier completing onboarding without waiting on the Stripe CLI
 // webhook. In mock mode this flips the mock account's `transfers` capability to
 // `active`; in both modes it then runs the same release logic the webhook uses.
